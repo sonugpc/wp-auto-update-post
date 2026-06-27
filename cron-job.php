@@ -1,104 +1,63 @@
 <?php
-// Add a custom cron schedule for auto-renew
 function auto_renew_add_custom_schedule() {
-    if (!wp_next_scheduled('auto_renew_cron_hook')) {
-        wp_schedule_event(time(), 'hourly', 'auto_renew_cron_hook');
+    if ( ! wp_next_scheduled( 'auto_renew_cron_hook' ) ) {
+        wp_schedule_event( time(), 'hourly', 'auto_renew_cron_hook' );
     }
 }
 
-add_action('wp', 'auto_renew_add_custom_schedule');
+add_action( 'wp', 'auto_renew_add_custom_schedule' );
+add_action( 'auto_renew_cron_hook', 'auto_renew_update_post_dates' );
 
-// Hook into the auto-renew cron job
-add_action('auto_renew_cron_hook', 'auto_renew_update_post_dates');
+function auto_renew_update_post_date_if_needed( $post_id, $frequency, $custom_time = null ) {
+    $last_push_date = get_post_meta( $post_id, '_auto_renew_last_push_date', true );
 
-// Function to update post dates if needed
-function auto_renew_update_post_date_if_needed($post_id, $frequency, $custom_time = null) {
-    $last_update_time = get_post_meta($post_id, '_auto_renew_last_update', true);
-    
-    // If last update time is not set or the specified frequency of days has passed
-    if (!$last_update_time || (time() - strtotime($last_update_time)) >= ($frequency * 24 * 60 * 60)) {
-        auto_renew_update_post_date($post_id, $frequency, $custom_time);
-        
-        // Update the last update time to the current time
-        update_post_meta($post_id, '_auto_renew_last_update', current_time('mysql'));
+    $elapsed = $last_push_date ? ( time() - strtotime( $last_push_date ) ) : PHP_INT_MAX;
+
+    if ( $elapsed >= ( $frequency * DAY_IN_SECONDS ) ) {
+        auto_renew_update_post_date( $post_id, $custom_time );
+        update_post_meta( $post_id, '_auto_renew_last_push_date', current_time( 'mysql' ) );
     }
 }
 
-// Function to update post dates
+// Single query across all CPTs; branches on frequency value inside the loop.
 function auto_renew_update_post_dates() {
-    $args = array(
-        'post_type' => 'post',
-        'meta_query' => array(
-            'relation' => 'AND',
+    $posts = get_posts( array(
+        'post_type'   => 'any',
+        'numberposts' => -1,
+        'meta_query'  => array(
             array(
-                'key' => '_auto_renew_enabled',
+                'key'   => '_auto_renew_enabled',
                 'value' => 1,
             ),
-            array(
-                'key' => '_auto_renew_frequency',
-                'value' => 'custom',
-                'compare' => '!=' // Exclude posts with custom frequency
-            ),
         ),
-    );
+    ) );
 
-    $posts = get_posts($args);
+    foreach ( $posts as $post ) {
+        $frequency   = get_post_meta( $post->ID, '_auto_renew_frequency', true );
+        $custom_time = get_post_meta( $post->ID, '_auto_renew_custom_time', true );
 
-    foreach ($posts as $post) {
-        $frequency = get_post_meta($post->ID, '_auto_renew_frequency', true);
-        $custom_time = get_post_meta($post->ID, '_auto_renew_custom_time', true);
-
-        // Check if the frequency is a valid number between 1 and 30
-        if (is_numeric($frequency) && $frequency >= 1 && $frequency <= 30) {
-            auto_renew_update_post_date_if_needed($post->ID, $frequency, $custom_time);
+        if ( $frequency === 'custom' ) {
+            $frequency = absint( get_post_meta( $post->ID, '_auto_renew_custom_frequency', true ) );
+        } else {
+            $frequency = absint( $frequency );
         }
-    }
 
-    // Process posts with custom frequency
-    $args_custom = array(
-        'post_type' => 'post',
-        'meta_query' => array(
-            'relation' => 'AND',
-            array(
-                'key' => '_auto_renew_enabled',
-                'value' => 1,
-            ),
-            array(
-                'key' => '_auto_renew_frequency',
-                'value' => 'custom',
-            ),
-        ),
-    );
-
-    $posts_custom = get_posts($args_custom);
-
-    foreach ($posts_custom as $post) {
-        $custom_frequency = get_post_meta($post->ID, '_auto_renew_custom_frequency', true);
-        $custom_time = get_post_meta($post->ID, '_auto_renew_custom_time', true);
-
-        // Check if the custom frequency is a valid number between 1 and 30
-        if (is_numeric($custom_frequency) && $custom_frequency >= 1 && $custom_frequency <= 30) {
-            auto_renew_update_post_date_if_needed($post->ID, $custom_frequency, $custom_time);
+        if ( $frequency >= 1 && $frequency <= 30 ) {
+            auto_renew_update_post_date_if_needed( $post->ID, $frequency, $custom_time );
         }
     }
 }
 
-// Function to update the post date
-function auto_renew_update_post_date($post_id, $frequency, $custom_time = null) {
-    $current_time = current_time('mysql');
-    
-    // If custom time is set, update the post date to the custom date and time
-    if ($custom_time) {
-        $current_time = date('Y-m-d', strtotime($current_time)) . ' ' . $custom_time;
+function auto_renew_update_post_date( $post_id, $custom_time = null ) {
+    $current_time = current_time( 'mysql' );
+
+    if ( $custom_time && preg_match( '/^\d{2}:\d{2}(:\d{2})?$/', $custom_time ) ) {
+        $current_time = date( 'Y-m-d', strtotime( $current_time ) ) . ' ' . $custom_time . ( strlen( $custom_time ) === 5 ? ':00' : '' );
     }
 
-    wp_update_post(
-        array(
-            'ID' => $post_id,
-            'post_date' => $current_time,
-            'post_date_gmt' => get_gmt_from_date($current_time),
-        )
-    );
-	        update_post_meta($post_id, '_auto_renew_enabled', 1);
-
+    wp_update_post( array(
+        'ID'            => $post_id,
+        'post_date'     => $current_time,
+        'post_date_gmt' => get_gmt_from_date( $current_time ),
+    ) );
 }
