@@ -2,7 +2,7 @@
 /*
 Plugin Name: Auto Renew Post Dates
 Description: Automatically update Posts Updated Date to Current Date.
-Version: 1.0
+Version: 1.1
 Author: Sonu Gupta
 */
 
